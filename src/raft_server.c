@@ -455,8 +455,12 @@ int raft_recv_entry(raft_server_t* me_, int node, msg_entry_t* e)
 
     ety.term = me->current_term;
     ety.id = e->id;
-    ety.data = e->data;
     ety.len = e->len;
+    /* raft_append_entry keeps a pointer to the data, but msg_entry_t e
+     * might be short-lived, so we need to copy the data here. note that
+     * the same is done in raft_recv_appendentries */
+    ety.data = malloc(e->len);
+    memcpy(ety.data, e->data, e->len);
     res = raft_append_entry(me_, &ety);
     raft_send_entry_response(me_, node, e->id, res);
     for (i=0; i<me->num_nodes; i++)
