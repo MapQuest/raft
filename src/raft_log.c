@@ -57,13 +57,13 @@ static void __ensurecapacity(
         memcpy(&temp[i], &me->entries[j], sizeof(raft_entry_t));
     }
 
+    /* clean up old entries */
+    free(me->entries);
+
     me->size *= 2;
     me->entries = temp;
     me->front = 0;
     me->back = me->count;
-
-    /* clean up old entries */
-    free(me->entries);
 }
 
 log_t* log_new()

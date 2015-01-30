@@ -52,6 +52,7 @@ raft_server_t* raft_new()
     me->election_timeout = 1000;
     me->log = log_new();
     raft_set_state((void*)me, RAFT_STATE_FOLLOWER);
+    me->current_leader = -1;
     return (void*)me;
 }
 
@@ -110,6 +111,7 @@ void raft_become_candidate(raft_server_t* me_)
     memset(me->votes_for_me, 0, sizeof(int) * me->num_nodes);
     me->current_term += 1;
     raft_vote(me_, me->nodeid);
+    me->current_leader = -1;
     raft_set_state(me_, RAFT_STATE_CANDIDATE);
 
     /* we need a random factor here to prevent simultaneous candidates */
@@ -312,6 +314,8 @@ int raft_recv_appendentries(
         raft_become_follower(me_);
 
     raft_set_current_term(me_, ae->term);
+    /* update current leader because we accepted an appendentries from it. */
+    me->current_leader = node;
 
     int i;
     
@@ -370,6 +374,11 @@ int raft_recv_requestvote(raft_server_t* me_, int node, msg_requestvote_t* vr)
     {
         raft_vote(me_,node);
         r.vote_granted = 1;
+    }
+
+    /* voted for someone, therefore must be in an election. */
+    if (me->voted_for >= 0) {
+        me->current_leader = -1;
     }
 
     __log(me_, "node requested vote: %d replying: %s",
@@ -446,8 +455,12 @@ int raft_recv_entry(raft_server_t* me_, int node, msg_entry_t* e)
 
     ety.term = me->current_term;
     ety.id = e->id;
-    ety.data = e->data;
     ety.len = e->len;
+    /* raft_append_entry keeps a pointer to the data, but msg_entry_t e
+     * might be short-lived, so we need to copy the data here. note that
+     * the same is done in raft_recv_appendentries */
+    ety.data = malloc(e->len);
+    memcpy(ety.data, e->data, e->len);
     res = raft_append_entry(me_, &ety);
     raft_send_entry_response(me_, node, e->id, res);
     for (i=0; i<me->num_nodes; i++)
@@ -600,6 +613,22 @@ int raft_is_leader(raft_server_t* me_)
 int raft_is_candidate(raft_server_t* me_)
 {
     return raft_get_state(me_) == RAFT_STATE_CANDIDATE;
+}
+
+int raft_get_current_leader(raft_server_t* me_, int* current_leader)
+{
+    raft_server_private_t* me = (void*)me_;
+
+    /* use -1 as marker for unknown leader, because node IDs
+     * must be valid array indexes (see raft_get_node) */
+    if (me->current_leader < 0) {
+        return 0;
+    } else {
+        if (current_leader != NULL) {
+            *current_leader = me->current_leader;
+        }
+        return 1;
+    }
 }
 
 /*--------------------------------------------------------------79-characters-*/
